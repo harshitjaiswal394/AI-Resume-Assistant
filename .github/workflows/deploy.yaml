@@ -1,0 +1,72 @@
+name: 🚀 Deploy to AWS ECS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # 🧾 Checkout code
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 🔐 Configure AWS
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    # 🐳 Login to ECR
+    - name: Login to Amazon ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION \
+        | docker login --username AWS --password-stdin \
+        $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+    # 🏗️ Build Backend
+    - name: Build Backend Image
+      run: |
+        docker build -t backend ./backend
+        docker tag backend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+
+    # 📤 Push Backend
+    - name: Push Backend Image
+      run: |
+        docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+
+    # 🏗️ Build Frontend
+    - name: Build Frontend Image
+      run: |
+        docker build -t frontend ./frontend
+        docker tag frontend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+
+    # 📤 Push Frontend
+    - name: Push Frontend Image
+      run: |
+        docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+
+    # 🔄 Force ECS Deploy
+    - name: Deploy Backend Service
+      run: |
+        aws ecs update-service \
+          --cluster ${{ secrets.ECS_CLUSTER }} \
+          --service ${{ secrets.ECS_BACKEND_SERVICE }} \
+          --force-new-deployment
+
+    - name: Deploy Frontend Service
+      run: |
+        aws ecs update-service \
+          --cluster ${{ secrets.ECS_CLUSTER }} \
+          --service ${{ secrets.ECS_FRONTEND_SERVICE }} \
+          --force-new-deployment
