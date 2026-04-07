@@ -10,6 +10,7 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ENVIRONMENT: dev
+  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
 jobs:
   deploy:
