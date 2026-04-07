@@ -8,6 +8,7 @@ on:
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ENVIRONMENT: dev
 
 jobs:
   deploy:
