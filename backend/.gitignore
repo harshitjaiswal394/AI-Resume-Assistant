@@ -1,0 +1,15 @@
+# Python
+venv/*
+__pycache__/*
+*.pyc
+
+# Env
+.env
+
+# Resume files
+*.pdf
+
+*.log
+
+.DS_Store
+Thumbs.db
