@@ -15,7 +15,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    ENVIRONMENT: dev
+    environment: dev
 
     steps:
 
