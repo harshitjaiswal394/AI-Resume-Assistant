@@ -1,7 +1,7 @@
 name: 🚀 Deploy to AWS ECS
 
 on:
-  push:
+  pull_request:
     branches:
       - main
 
@@ -57,16 +57,3 @@ jobs:
         docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
 
     # 🔄 Force ECS Deploy
-    - name: Deploy Backend Service
-      run: |
-        aws ecs update-service \
-          --cluster ${{ secrets.ECS_CLUSTER }} \
-          --service ${{ secrets.ECS_BACKEND_SERVICE }} \
-          --force-new-deployment
-
-    - name: Deploy Frontend Service
-      run: |
-        aws ecs update-service \
-          --cluster ${{ secrets.ECS_CLUSTER }} \
-          --service ${{ secrets.ECS_FRONTEND_SERVICE }} \
-          --force-new-deployment
