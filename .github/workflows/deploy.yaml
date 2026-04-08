@@ -1,4 +1,4 @@
-name: 🚀 Deploy to AWS ECS
+name: 🚀 Deploy to AWS ECS with Service Connect
 
 on:
   push:
@@ -9,8 +9,11 @@ on:
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECS_CLUSTER: jobgpt
+  ECS_NAMESPACE: jobgpt
+  BACKEND_SERVICE: backend-service
+  FRONTEND_SERVICE: frontend-service
   ENVIRONMENT: dev
-  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
 jobs:
   deploy:
@@ -19,11 +22,11 @@ jobs:
 
     steps:
 
-    # 🧾 Checkout code
+    #  Checkout code
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 🔐 Configure AWS
+    #  Configure AWS
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
@@ -31,46 +34,264 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
 
-    # 🐳 Login to ECR
+    #  Create ECS Cluster (if not exists)
+    - name: Create ECS Cluster
+      run: |
+        CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].clusterName' --output text 2>/dev/null)
+        
+        if [ "$CLUSTER_EXISTS" != "${{ env.ECS_CLUSTER }}" ]; then
+          echo "Creating ECS cluster: ${{ env.ECS_CLUSTER }}"
+          aws ecs create-cluster \
+            --cluster-name ${{ env.ECS_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --tags key=Environment,value=${{ env.ENVIRONMENT }} key=Project,value=jobgpt
+          echo "Cluster created successfully"
+        else
+          echo "Cluster ${{ env.ECS_CLUSTER }} already exists"
+        fi
+
+    #  Create Service Connect Namespace (if not exists)
+    - name: Create Service Connect Namespace
+      run: |
+        NAMESPACE_EXISTS=$(aws servicediscovery list-namespaces --region ${{ env.AWS_REGION }} --query "Namespaces[?Name=='${{ env.ECS_NAMESPACE }}'].Id" --output text 2>/dev/null)
+        
+        if [ -z "$NAMESPACE_EXISTS" ]; then
+          echo "Creating Service Connect namespace: ${{ env.ECS_NAMESPACE }}"
+          NAMESPACE_ID=$(aws servicediscovery create-private-dns-namespace \
+            --name ${{ env.ECS_NAMESPACE }} \
+            --vpc $(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text) \
+            --region ${{ env.AWS_REGION }} \
+            --query 'NamespaceId' \
+            --output text)
+          echo "Namespace created with ID: $NAMESPACE_ID"
+          echo "NAMESPACE_ID=$NAMESPACE_ID" >> $GITHUB_ENV
+        else
+          echo "Namespace ${{ env.ECS_NAMESPACE }} already exists"
+          echo "NAMESPACE_ID=$NAMESPACE_EXISTS" >> $GITHUB_ENV
+        fi
+
+    #  Create CloudWatch Log Groups
+    - name: Create CloudWatch Log Groups
+      run: |
+        # Backend log group
+        aws logs create-log-group --log-group-name /ecs/jobgpt-backend --region ${{ env.AWS_REGION }} 2>/dev/null || true
+        aws logs put-retention-policy --log-group-name /ecs/jobgpt-backend --retention-in-days 7 --region ${{ env.AWS_REGION }} 2>/dev/null || true
+        
+        # Frontend log group
+        aws logs create-log-group --log-group-name /ecs/jobgpt-frontend --region ${{ env.AWS_REGION }} 2>/dev/null || true
+        aws logs put-retention-policy --log-group-name /ecs/jobgpt-frontend --retention-in-days 7 --region ${{ env.AWS_REGION }} 2>/dev/null || true
+        
+        echo "Log groups configured"
+
+    #  Login to ECR
     - name: Login to Amazon ECR
       run: |
-        aws ecr get-login-password --region $AWS_REGION \
+        aws ecr get-login-password --region ${{ env.AWS_REGION }} \
         | docker login --username AWS --password-stdin \
-        $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+        ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
 
-    # 🏗️ Build Backend
+    #  Build Backend
     - name: Build Backend Image
       run: |
         docker build -t backend ./backend
-        docker tag backend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+        docker tag backend:latest ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+        docker tag backend:latest ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:${{ github.sha }}
 
-    # 📤 Push Backend
+    #  Push Backend
     - name: Push Backend Image
       run: |
-        docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+        docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+        docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:${{ github.sha }}
 
-    # 🏗️ Build Frontend
+    #  Build Frontend
     - name: Build Frontend Image
       run: |
         docker build -t frontend ./frontend
-        docker tag frontend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+        docker tag frontend:latest ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+        docker tag frontend:latest ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:${{ github.sha }}
 
-    # 📤 Push Frontend
+    #  Push Frontend
     - name: Push Frontend Image
       run: |
-        docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+        docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+        docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:${{ github.sha }}
 
-    # 🔄 Force ECS Deploy
-    - name: Deploy Backend Service
+    #  Register Backend Task Definition
+    - name: Register Backend Task Definition
       run: |
-        aws ecs update-service \
-          --cluster ${{ secrets.ECS_CLUSTER }} \
-          --service ${{ secrets.ECS_BACKEND_SERVICE }} \
-          --force-new-deployment
+        aws ecs register-task-definition \
+          --cli-input-json file://backend/backend-task.json \
+          --region ${{ env.AWS_REGION }}
+        echo "Backend task definition registered"
 
-    - name: Deploy Frontend Service
+    #  Register Frontend Task Definition
+    - name: Register Frontend Task Definition
       run: |
-        aws ecs update-service \
-          --cluster ${{ secrets.ECS_CLUSTER }} \
-          --service ${{ secrets.ECS_FRONTEND_SERVICE }} \
-          --force-new-deployment
+        aws ecs register-task-definition \
+          --cli-input-json file://frontend/frontend-task.json \
+          --region ${{ env.AWS_REGION }}
+        echo "Frontend task definition registered"
+
+    #  Get VPC and Subnet Info for Services
+    - name: Get VPC and Subnet Info
+      run: |
+        DEFAULT_VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text --region ${{ env.AWS_REGION }})
+        SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$DEFAULT_VPC --query 'Subnets[*].SubnetId' --output text --region ${{ env.AWS_REGION }})
+        SUBNET_ARRAY=$(echo $SUBNETS | awk '{print $1}')
+        
+        echo "DEFAULT_VPC=$DEFAULT_VPC" >> $GITHUB_ENV
+        echo "SUBNETS=$SUBNETS" >> $GITHUB_ENV
+        echo "SUBNET_ARRAY=$SUBNET_ARRAY" >> $GITHUB_ENV
+        
+        echo "VPC: $DEFAULT_VPC"
+        echo "Subnets: $SUBNETS"
+
+    #  Create/Update Backend Service with Service Connect
+    - name: Create/Update Backend Service
+      run: |
+        SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.BACKEND_SERVICE }} --region ${{ env.AWS_REGION }} --query 'services[0].serviceName' --output text 2>/dev/null)
+        
+        if [ "$SERVICE_EXISTS" == "${{ env.BACKEND_SERVICE }}" ]; then
+          echo "Updating existing Backend service"
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.BACKEND_SERVICE }} \
+            --task-definition backend \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+        else
+          echo "Creating new Backend service with Service Connect"
+          
+          # Get VPC security group (default)
+          SG_ID=$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default --query 'SecurityGroups[0].GroupId' --output text --region ${{ env.AWS_REGION }})
+          
+          # Create subnet list parameter
+          SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
+          
+          aws ecs create-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.BACKEND_SERVICE }} \
+            --task-definition backend \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
+            --service-connect-configuration "{\
+              \"enabled\": true,\
+              \"namespace\": \"${{ env.ECS_NAMESPACE }}\",\
+              \"services\": [{\
+                \"portName\": \"backend-8000\",\
+                \"discoveryName\": \"backend-service\",\
+                \"clientAliases\": [{\"port\": 8000, \"dns\": \"backend-service.jobgpt\"}]\
+              }]\
+            }" \
+            --region ${{ env.AWS_REGION }} \
+            --tags key=Service,value=backend key=Environment,value=${{ env.ENVIRONMENT }}
+        fi
+        echo "Backend service ready"
+
+    #  Create/Update Frontend Service with Service Connect
+    - name: Create/Update Frontend Service
+      run: |
+        SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.FRONTEND_SERVICE }} --region ${{ env.AWS_REGION }} --query 'services[0].serviceName' --output text 2>/dev/null)
+        
+        if [ "$SERVICE_EXISTS" == "${{ env.FRONTEND_SERVICE }}" ]; then
+          echo "Updating existing Frontend service"
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.FRONTEND_SERVICE }} \
+            --task-definition frontend \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+        else
+          echo "Creating new Frontend service with Service Connect"
+          
+          # Get VPC security group (default)
+          SG_ID=$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default --query 'SecurityGroups[0].GroupId' --output text --region ${{ env.AWS_REGION }})
+          
+          # Create subnet list parameter
+          SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
+          
+          aws ecs create-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.FRONTEND_SERVICE }} \
+            --task-definition frontend \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
+            --service-connect-configuration "{\
+              \"enabled\": true,\
+              \"namespace\": \"${{ env.ECS_NAMESPACE }}\",\
+              \"services\": [{\
+                \"portName\": \"frontend-80\",\
+                \"discoveryName\": \"frontend-service\",\
+                \"clientAliases\": [{\"port\": 80, \"dns\": \"frontend-service.jobgpt\"}]\
+              }]\
+            }" \
+            --region ${{ env.AWS_REGION }} \
+            --tags key=Service,value=frontend key=Environment,value=${{ env.ENVIRONMENT }}
+        fi
+        echo "Frontend service ready"
+
+    #  Verify Deployment
+    - name: Verify Deployment
+      run: |
+        echo "Waiting for services to stabilize..."
+        sleep 10
+        
+        # Check Backend Service
+        BACKEND_STATUS=$(aws ecs describe-services \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.BACKEND_SERVICE }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'services[0].status' \
+          --output text)
+        
+        # Check Frontend Service
+        FRONTEND_STATUS=$(aws ecs describe-services \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.FRONTEND_SERVICE }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'services[0].status' \
+          --output text)
+        
+        echo "Backend Service Status: $BACKEND_STATUS"
+        echo "Frontend Service Status: $FRONTEND_STATUS"
+        
+        # Check running tasks
+        BACKEND_TASKS=$(aws ecs describe-services \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.BACKEND_SERVICE }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'services[0].runningCount' \
+          --output text)
+        
+        FRONTEND_TASKS=$(aws ecs describe-services \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.FRONTEND_SERVICE }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'services[0].runningCount' \
+          --output text)
+        
+        echo "Backend Running Tasks: $BACKEND_TASKS"
+        echo "Frontend Running Tasks: $FRONTEND_TASKS"
+
+    #  Display Service Details
+    - name: Display Service Details
+      run: |
+        echo "=== ECS Cluster Details ==="
+        echo "Cluster Name: ${{ env.ECS_CLUSTER }}"
+        echo "Region: ${{ env.AWS_REGION }}"
+        echo "Service Connect Namespace: ${{ env.ECS_NAMESPACE }}"
+        echo ""
+        echo "=== Service Details ==="
+        echo "Backend Service: ${{ env.BACKEND_SERVICE }}"
+        echo "Backend DNS: backend-service.jobgpt"
+        echo "Backend Port: 8000"
+        echo ""
+        echo "Frontend Service: ${{ env.FRONTEND_SERVICE }}"
+        echo "Frontend DNS: frontend-service.jobgpt"
+        echo "Frontend Port: 80"
+        echo ""
+        echo "=== CloudWatch Logs ==="
+        echo "Backend Logs: /ecs/jobgpt-backend"
+        echo "Frontend Logs: /ecs/jobgpt-frontend"
