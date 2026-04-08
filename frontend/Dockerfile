@@ -8,6 +8,8 @@ RUN npm install
 
 COPY . .
 
+RUN apt-get update && apt-get install curl wget -y && rm -fr /var/lib/apt/lists/*
+
 RUN npm run build
 
 # Stage 2: Serve using nginx
