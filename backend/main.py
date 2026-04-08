@@ -58,3 +58,11 @@ def ask_question(data: dict = Body(...)):
     except Exception as e:
         logging.error(f" Error generating answer: {str(e)}")
         return {"answer": " Unable to generate a response due to an error. Please try again later."}
+        
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "service": "backend"
+    }
