@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - hotfix1
   workflow_dispatch:
 
 env:
