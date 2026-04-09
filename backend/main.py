@@ -18,10 +18,10 @@ app = FastAPI()
 chat_history = []
 
 # CORS Configuration - Environment-based for flexibility
-"""CORS_ORIGINS = os.getenv(
-    "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,http://frontend-service.jobgpt"
-).split(",")"""
+#CORS_ORIGINS = os.getenv(
+#    "CORS_ORIGINS",
+#    "http://localhost:3000,http://127.0.0.1:3000,http://frontend-service.jobgpt"
+#).split(",")
 
 app.add_middleware(
     CORSMiddleware,
