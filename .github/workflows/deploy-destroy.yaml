@@ -7,6 +7,13 @@ run-name: >-
     || format('🚀 Deploy {0}', github.event.inputs.environment)
   }}
 
+run-name: >-
+  ${{ 
+    github.event_name == 'workflow_dispatch' && github.event.inputs.destroy == 'true'
+    && '💣 Destroy AWS ECS'
+    || '🚀 Deploy AWS ECS'
+  }}
+
 on:
   pull_request:
     branches:
@@ -109,7 +116,24 @@ jobs:
           --password-stdin \
           $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-      - name: Create ECR Repos
+      - name: Create ECR Repositories (if not exists)
+        run: |
+          for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
+          do
+            EXISTS=$(aws ecr describe-repositories \
+              --repository-names $repo \
+              --query 'repositories[0].repositoryName' \
+              --output text 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$EXISTS" = "NOT_FOUND" ]; then
+              echo "Creating ECR repo: $repo"
+              aws ecr create-repository --repository-name $repo
+            else
+              echo "ECR repo exists: $repo"
+            fi
+          done
+
+      - name: Build & Push Backend
         run: |
           for repo in $ECR_BACKEND_REPO $ECR_FRONTEND_REPO
           do
@@ -211,9 +235,15 @@ jobs:
         run: |
           for family in backend frontend
           do
-            for arn in $(aws ecs list-task-definitions --family-prefix $family --query 'taskDefinitionArns[]' --output text)
-            do
-              aws ecs deregister-task-definition --task-definition $arn || true
+            ARNS=$(aws ecs list-task-definitions \
+              --family-prefix $family \
+              --query 'taskDefinitionArns[]' \
+              --output text)
+
+            for arn in $ARNS; do
+              echo "Deregistering: $arn"
+              aws ecs deregister-task-definition \
+                --task-definition $arn || true
             done
           done
 
