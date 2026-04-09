@@ -28,7 +28,7 @@ jobs:
 #  DEPLOY JOB
 # =========================
   deploy:
-    if: ${{ github.event_name == 'push' || github.event.inputs.destroy != 'true' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.destroy != 'true') }}
     runs-on: ubuntu-latest
     environment: dev
 
@@ -122,7 +122,7 @@ jobs:
 #  DESTROY JOB
 # =========================
   destroy:
-    if: ${{ github.event.inputs.destroy == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.destroy == 'true' }}
     runs-on: ubuntu-latest
     environment: dev
 
