@@ -117,6 +117,14 @@ jobs:
         docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
         docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:${{ github.sha }}
 
+    #  Register Backend Task Definition
+    - name: Register Backend Task Definition
+      run: |
+        aws ecs register-task-definition \
+          --cli-input-json file://backend/backend-task.json \
+          --region ${{ env.AWS_REGION }}
+        echo "Backend task definition registered"
+
     #  Register Frontend Task Definition
     - name: Register Frontend Task Definition
       run: |
