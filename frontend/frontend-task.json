@@ -12,6 +12,7 @@
       "essential": true,
       "portMappings": [
         {
+          "name": "frontend-80",
           "containerPort": 80,
           "protocol": "tcp"
         }

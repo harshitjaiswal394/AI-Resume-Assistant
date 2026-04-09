@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - dev
-      - hotfix1
   workflow_dispatch:
 
 env:
@@ -182,7 +181,7 @@ jobs:
               \"services\": [{\
                 \"portName\": \"backend-8000\",\
                 \"discoveryName\": \"backend-service\",\
-                \"clientAliases\": [{\"port\": 8000, \"dns\": \"backend-service.jobgpt\"}]\
+                \"clientAliases\": [{\"port\": 8000, \"dnsName\": \"backend-service\"}]\
               }]\
             }" \
             --region ${{ env.AWS_REGION }} \
@@ -225,7 +224,7 @@ jobs:
               \"services\": [{\
                 \"portName\": \"frontend-80\",\
                 \"discoveryName\": \"frontend-service\",\
-                \"clientAliases\": [{\"port\": 80, \"dns\": \"frontend-service.jobgpt\"}]\
+                \"clientAliases\": [{\"port\": 80, \"dnsName\": \"frontend-service\"}]\
               }]\
             }" \
             --region ${{ env.AWS_REGION }} \
