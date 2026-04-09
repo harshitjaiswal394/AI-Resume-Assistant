@@ -30,6 +30,7 @@ jobs:
   deploy:
     if: ${{ github.event_name == 'push' || github.event.inputs.destroy != 'true' }}
     runs-on: ubuntu-latest
+    environment: dev
 
     steps:
 
@@ -123,6 +124,7 @@ jobs:
   destroy:
     if: ${{ github.event.inputs.destroy == 'true' }}
     runs-on: ubuntu-latest
+    environment: dev
 
     steps:
 
