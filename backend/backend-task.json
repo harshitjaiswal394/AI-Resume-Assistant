@@ -20,7 +20,11 @@
       "environment": [
         {
           "name": "CORS_ORIGINS",
-          "value": "*"
+          "value": "http://localhost:3000,http://127.0.0.1:3000,http://frontend-service.jobgpt"
+        },
+        {
+          "name": "NVIDIA_API_KEY",
+          "value": "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"
         }
       ],
       "healthCheck": {
