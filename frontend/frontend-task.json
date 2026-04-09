@@ -18,6 +18,7 @@
           "protocol": "tcp"
         }
       ],
+      "environment": [],
       "healthCheck": {
         "command": [
           "CMD-SHELL",
@@ -32,7 +33,7 @@
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "__LOG_GROUP__",
-          "awslogs-region": "__LOG_GROUP__",
+          "awslogs-region": "__AWS_REGION__",
           "awslogs-stream-prefix": "ecs"
         }
       }

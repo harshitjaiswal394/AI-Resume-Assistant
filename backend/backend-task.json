@@ -18,7 +18,7 @@
           "protocol": "tcp"
         }
       ],
-      "environment": __ENV_VARS__,
+      "environment": [],
       "healthCheck": {
         "command": [
           "CMD-SHELL",
