@@ -72,23 +72,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure ECS Cluster Ready
-        run: |
-          STATUS=$(aws ecs describe-clusters \
-            --clusters $ECS_CLUSTER \
-            --query 'clusters[0].status' \
-            --output text 2>/dev/null || echo "NOT_FOUND")
-
-          if [ "$STATUS" = "ACTIVE" ]; then
-            echo "Cluster exists"
-          elif [ "$STATUS" = "DEPROVISIONING" ]; then
-            echo "Waiting for deletion..."
-            sleep 30
-            aws ecs create-cluster --cluster-name $ECS_CLUSTER
-          else
-            aws ecs create-cluster --cluster-name $ECS_CLUSTER
-          fi
-
       - name: Create Namespace
         run: |
           NS=$(aws servicediscovery list-namespaces \
@@ -127,6 +110,32 @@ jobs:
           else
             echo "Namespace already exists: $NS"
           fi
+      
+      - name: Ensure ECS Cluster Ready
+        run: |
+          STATUS=$(aws ecs describe-clusters \
+            --clusters $ECS_CLUSTER \
+            --query 'clusters[0].status' \
+            --output text 2>/dev/null || echo "NOT_FOUND")
+
+          if [ "$STATUS" = "ACTIVE" ]; then
+            echo "Cluster exists"
+          elif [ "$STATUS" = "DEPROVISIONING" ]; then
+            echo "Waiting for deletion..."
+            sleep 30
+            aws ecs create-cluster \
+              --cluster-name $ECS_CLUSTER \
+              --service-connect-defaults "namespace=$ECS_NAMESPACE"
+          else
+            aws ecs create-cluster \
+              --cluster-name $ECS_CLUSTER \
+              --service-connect-defaults "namespace=$ECS_NAMESPACE"
+          fi
+
+          # Update existing cluster with namespace if not set
+          aws ecs update-cluster \
+            --cluster $ECS_CLUSTER \
+            --service-connect-defaults "namespace=$ECS_NAMESPACE"
 
       - name: Login to ECR
         run: |
@@ -256,100 +265,111 @@ jobs:
 
       - name: Create/Update Backend Service
         run: |
+          # Always delete and recreate to guarantee Service Connect config
           SERVICE_EXISTS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $BACKEND_SERVICE \
             --region ${{ env.AWS_REGION }} \
-            --query 'services[0].serviceName' \
+            --query 'services[0].status' \
             --output text 2>/dev/null)
 
-          if [ "$SERVICE_EXISTS" == "$BACKEND_SERVICE" ]; then
-            echo "Updating existing Backend service"
+          if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
+            echo "Deleting existing Backend service..."
             aws ecs update-service \
               --cluster $ECS_CLUSTER \
               --service $BACKEND_SERVICE \
-              --task-definition backend \
-              --enable-execute-command \
-              --force-new-deployment \
+              --desired-count 0 \
               --region ${{ env.AWS_REGION }}
-          else
-            echo "Creating new Backend service with Service Connect"
-
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default \
-              --query 'SecurityGroups[0].GroupId' \
-              --output text \
-              --region ${{ env.AWS_REGION }})
-
-            SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
-
-            aws ecs create-service \
+            sleep 20
+            aws ecs delete-service \
               --cluster $ECS_CLUSTER \
-              --service-name $BACKEND_SERVICE \
-              --task-definition backend \
-              --desired-count 1 \
-              --enable-execute-command \
-              --launch-type FARGATE \
-              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
-              --service-connect-configuration "{\
-                \"enabled\": true,\
-                \"namespace\": \"$ECS_NAMESPACE\",\
-                \"services\": [{\
-                  \"portName\": \"backend-8000\",\
-                  \"discoveryName\": \"$BACKEND_SERVICE\",\
-                  \"clientAliases\": [{\"port\": 8000, \"dnsName\": \"$BACKEND_SERVICE\"}]\
-                }]\
-              }" \
-              --region ${{ env.AWS_REGION }} \
-              --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
+              --service $BACKEND_SERVICE \
+              --force \
+              --region ${{ env.AWS_REGION }}
+            sleep 20
           fi
+
+          echo "Creating Backend service..."
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
+
+          aws ecs create-service \
+            --cluster $ECS_CLUSTER \
+            --service-name $BACKEND_SERVICE \
+            --task-definition backend \
+            --desired-count 1 \
+            --enable-execute-command \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
+            --service-connect-configuration "{\
+              \"enabled\": true,\
+              \"namespace\": \"$ECS_NAMESPACE\",\
+              \"services\": [{\
+                \"portName\": \"backend-8000\",\
+                \"discoveryName\": \"$BACKEND_SERVICE\",\
+                \"clientAliases\": [{\"port\": 8000, \"dnsName\": \"$BACKEND_SERVICE\"}]\
+              }]\
+            }" \
+            --region ${{ env.AWS_REGION }} \
+            --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
+
           echo "Backend service ready"
 
       - name: Create/Update Frontend Service
         run: |
+          # Always delete and recreate to guarantee Service Connect config
           SERVICE_EXISTS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $FRONTEND_SERVICE \
             --region ${{ env.AWS_REGION }} \
-            --query 'services[0].serviceName' \
+            --query 'services[0].status' \
             --output text 2>/dev/null)
 
-          if [ "$SERVICE_EXISTS" == "$FRONTEND_SERVICE" ]; then
-            echo "Updating existing Frontend service"
+          if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
+            echo "Deleting existing Frontend service..."
             aws ecs update-service \
               --cluster $ECS_CLUSTER \
               --service $FRONTEND_SERVICE \
-              --task-definition frontend \
-              --force-new-deployment \
-              --enable-execute-command \
+              --desired-count 0 \
               --region ${{ env.AWS_REGION }}
-          else
-            echo "Creating new Frontend service with Service Connect"
-
-            SG_ID=$(aws ec2 describe-security-groups \
-              --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default \
-              --query 'SecurityGroups[0].GroupId' \
-              --output text \
-              --region ${{ env.AWS_REGION }})
-
-            SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
-
-            # Frontend is CLIENT only - no services block, just namespace
-            aws ecs create-service \
+            sleep 20
+            aws ecs delete-service \
               --cluster $ECS_CLUSTER \
-              --service-name $FRONTEND_SERVICE \
-              --task-definition frontend \
-              --desired-count 1 \
-              --launch-type FARGATE \
-              --enable-execute-command \
-              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
-              --service-connect-configuration "{\
-                \"enabled\": true,\
-                \"namespace\": \"$ECS_NAMESPACE\"\
-              }" \
-              --region ${{ env.AWS_REGION }} \
-              --tags key=Service,value=frontend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
+              --service $FRONTEND_SERVICE \
+              --force \
+              --region ${{ env.AWS_REGION }}
+            sleep 20
           fi
+
+          echo "Creating Frontend service..."
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
+
+          aws ecs create-service \
+            --cluster $ECS_CLUSTER \
+            --service-name $FRONTEND_SERVICE \
+            --task-definition frontend \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --enable-execute-command \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
+            --service-connect-configuration "{\
+              \"enabled\": true,\
+              \"namespace\": \"$ECS_NAMESPACE\"\
+            }" \
+            --region ${{ env.AWS_REGION }} \
+            --tags key=Service,value=frontend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
+
           echo "Frontend service ready"
 
       - name: Verify Deployment
