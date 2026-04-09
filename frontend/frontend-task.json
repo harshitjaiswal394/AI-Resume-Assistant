@@ -5,6 +5,7 @@
   "cpu": "256",
   "memory": "512",
   "executionRoleArn": "arn:aws:iam::716608655181:role/AmazonECSTaskExecutionRolePolicy",
+  "taskRoleArn": "arn:aws:iam::716608655181:role/ECSTaskRole",
   "containerDefinitions": [
     {
       "name": "frontend-container",
