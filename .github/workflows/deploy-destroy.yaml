@@ -1,10 +1,18 @@
 name: 🚀 Deploy / Destroy AWS ECS
 
+run-name: >-
+  ${{ 
+    github.event_name == 'workflow_dispatch' && github.event.inputs.destroy == 'true'
+    && '💣 Destroy AWS ECS'
+    || '🚀 Deploy AWS ECS'
+  }}
+
 on:
-  push:
+  pull_request:
     branches:
       - main
-      - dev
+    types:
+      - closed
 
   workflow_dispatch:
     inputs:
@@ -28,7 +36,7 @@ jobs:
 # DEPLOY JOB
 # =========================
   deploy:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.destroy != 'true') }}
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || (github.event_name == 'workflow_dispatch' && github.event.inputs.destroy != 'true') }}
     runs-on: ubuntu-latest
     environment: dev
 
@@ -66,6 +74,23 @@ jobs:
         run: |
           aws ecr get-login-password | docker login --username AWS --password-stdin \
           ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+      - name: Create ECR Repositories (if not exists)
+        run: |
+          for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
+          do
+            EXISTS=$(aws ecr describe-repositories \
+              --repository-names $repo \
+              --query 'repositories[0].repositoryName' \
+              --output text 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$EXISTS" = "NOT_FOUND" ]; then
+              echo "Creating ECR repo: $repo"
+              aws ecr create-repository --repository-name $repo
+            else
+              echo "ECR repo exists: $repo"
+            fi
+          done
 
       - name: Build & Push Backend
         run: |
@@ -164,7 +189,7 @@ jobs:
             done
           fi
 
-      - name: Delete Namespace
+            - name: Delete Namespace
         run: |
           NS_ID=$(aws servicediscovery list-namespaces \
             --query "Namespaces[?Name=='${{ env.ECS_NAMESPACE }}'].Id" \
@@ -173,6 +198,22 @@ jobs:
           if [ ! -z "$NS_ID" ]; then
             aws servicediscovery delete-namespace --id $NS_ID || true
           fi
+
+      - name: Delete Task Definitions
+        run: |
+          for family in backend frontend
+          do
+            ARNS=$(aws ecs list-task-definitions \
+              --family-prefix $family \
+              --query 'taskDefinitionArns[]' \
+              --output text)
+
+            for arn in $ARNS; do
+              echo "Deregistering: $arn"
+              aws ecs deregister-task-definition \
+                --task-definition $arn || true
+            done
+          done
 
       - name: Delete Cluster
         run: |
