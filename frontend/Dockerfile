@@ -4,7 +4,7 @@ FROM node:18 as build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 
@@ -18,10 +18,10 @@ FROM nginx:alpine
 
 COPY --from=build /app/build /usr/share/nginx/html
 
-# The official nginx image automatically runs envsubst on /etc/nginx/templates/
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/entrypoint.sh"]

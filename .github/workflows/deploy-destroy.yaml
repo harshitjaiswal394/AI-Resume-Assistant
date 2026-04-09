@@ -208,6 +208,7 @@ jobs:
             --arg LOG_GROUP "$LOG_GROUP" \
             --arg AWS_REGION "$AWS_REGION" \
             --arg ENVIRONMENT "${ENVIRONMENT:-dev}" \
+            --arg BACKEND_URL "$BACKEND_URL" \
             '
             .containerDefinitions[0].image = $IMAGE |
             .containerDefinitions[0].logConfiguration.options["awslogs-group"] = $LOG_GROUP |
