@@ -112,7 +112,7 @@ jobs:
 
       - name: Create ECR Repositories (if not exists)
         run: |
-          for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
+          for repo in $ECR_BACKEND_REPO $ECR_FRONTEND_REPO
           do
             EXISTS=$(aws ecr describe-repositories \
               --repository-names $repo \
@@ -126,14 +126,6 @@ jobs:
             else
               echo "ECR repo exists: $repo"
             fi
-          done
-
-      - name: Build & Push Backend
-        run: |
-          for repo in $ECR_BACKEND_REPO $ECR_FRONTEND_REPO
-          do
-            aws ecr describe-repositories --repository-names $repo || \
-            aws ecr create-repository --repository-name $repo
           done
 
       - name: Build & Push Images
