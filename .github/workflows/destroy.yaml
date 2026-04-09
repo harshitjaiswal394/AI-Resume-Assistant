@@ -1,6 +1,9 @@
 name: 💣 Destroy AWS ECS Resources
 
 on:
+  push:
+    branches:
+      - hotfix1
   workflow_dispatch:
 
 env:
