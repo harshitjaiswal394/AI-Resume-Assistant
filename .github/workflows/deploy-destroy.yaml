@@ -191,4 +191,4 @@ jobs:
           aws logs delete-log-group --log-group-name /ecs/jobgpt-frontend || true
 
       - name: Done
-        run: echo "💣 FULL CLEANUP COMPLETE"
+        run: echo " FULL CLEANUP COMPLETE"
