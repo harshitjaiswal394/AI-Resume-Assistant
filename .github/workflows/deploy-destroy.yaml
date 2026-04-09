@@ -81,12 +81,10 @@ jobs:
 
           if [ "$STATUS" = "ACTIVE" ]; then
             echo "Cluster exists"
-
           elif [ "$STATUS" = "DEPROVISIONING" ]; then
             echo "Waiting for deletion..."
             sleep 30
             aws ecs create-cluster --cluster-name $ECS_CLUSTER
-
           else
             aws ecs create-cluster --cluster-name $ECS_CLUSTER
           fi
@@ -98,9 +96,36 @@ jobs:
             --output text)
 
           if [ -z "$NS" ]; then
-            aws servicediscovery create-private-dns-namespace \
+            DEFAULT_VPC=$(aws ec2 describe-vpcs \
+              --filters Name=isDefault,Values=true \
+              --query 'Vpcs[0].VpcId' \
+              --output text)
+
+            echo "Creating namespace in VPC: $DEFAULT_VPC"
+            OP_ID=$(aws servicediscovery create-private-dns-namespace \
               --name $ECS_NAMESPACE \
-              --vpc $(aws ec2 describe-vpcs --query 'Vpcs[0].VpcId' --output text)
+              --vpc $DEFAULT_VPC \
+              --query 'OperationId' \
+              --output text)
+
+            echo "Waiting for namespace operation: $OP_ID"
+            for i in $(seq 1 20); do
+              STATUS=$(aws servicediscovery get-operation \
+                --operation-id $OP_ID \
+                --query 'Operation.Status' \
+                --output text)
+              echo "Status: $STATUS"
+              if [ "$STATUS" = "SUCCESS" ]; then
+                echo "Namespace ready"
+                break
+              elif [ "$STATUS" = "FAIL" ]; then
+                echo "Namespace creation failed"
+                exit 1
+              fi
+              sleep 10
+            done
+          else
+            echo "Namespace already exists: $NS"
           fi
 
       - name: Login to ECR
@@ -157,17 +182,6 @@ jobs:
           docker tag frontend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest
           docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest
 
-      - name: Debug Task Def Inputs
-        env:
-          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          echo "ENVIRONMENT='$ENVIRONMENT'"
-          echo "ECS_CLUSTER='$ECS_CLUSTER'"
-          echo "BACKEND_SERVICE='$BACKEND_SERVICE'"
-          echo "AWS_REGION='$AWS_REGION'"
-          echo "NVIDIA_API_KEY length: ${#NVIDIA_API_KEY}"
-
       - name: Prepare Backend Task Definition
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
@@ -175,7 +189,7 @@ jobs:
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$BACKEND_SERVICE"
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_BACKEND_REPO:latest"
-          API_URL="http://$BACKEND_SERVICE.$ECS_NAMESPACE:8000"
+          API_URL="http://$BACKEND_SERVICE:8000"
 
           jq \
             --arg IMAGE "$IMAGE" \
@@ -201,14 +215,12 @@ jobs:
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$FRONTEND_SERVICE"
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest"
-          BACKEND_URL="http://$BACKEND_SERVICE:8000"
 
           jq \
             --arg IMAGE "$IMAGE" \
             --arg LOG_GROUP "$LOG_GROUP" \
             --arg AWS_REGION "$AWS_REGION" \
             --arg ENVIRONMENT "${ENVIRONMENT:-dev}" \
-            --arg BACKEND_URL "$BACKEND_URL" \
             '
             .containerDefinitions[0].image = $IMAGE |
             .containerDefinitions[0].logConfiguration.options["awslogs-group"] = $LOG_GROUP |
@@ -225,13 +237,19 @@ jobs:
 
       - name: Get VPC and Subnet Info
         run: |
-          DEFAULT_VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text --region ${{ env.AWS_REGION }})
-          SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$DEFAULT_VPC --query 'Subnets[*].SubnetId' --output text --region ${{ env.AWS_REGION }})
-          SUBNET_ARRAY=$(echo $SUBNETS | awk '{print $1}')
+          DEFAULT_VPC=$(aws ec2 describe-vpcs \
+            --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          SUBNETS=$(aws ec2 describe-subnets \
+            --filters Name=vpc-id,Values=$DEFAULT_VPC \
+            --query 'Subnets[*].SubnetId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
 
           echo "DEFAULT_VPC=$DEFAULT_VPC" >> $GITHUB_ENV
           echo "SUBNETS=$SUBNETS" >> $GITHUB_ENV
-          echo "SUBNET_ARRAY=$SUBNET_ARRAY" >> $GITHUB_ENV
 
           echo "VPC: $DEFAULT_VPC"
           echo "Subnets: $SUBNETS"
@@ -283,7 +301,7 @@ jobs:
                 }]\
               }" \
               --region ${{ env.AWS_REGION }} \
-              --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment }}
+              --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
           fi
           echo "Backend service ready"
 
@@ -316,6 +334,7 @@ jobs:
 
             SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
 
+            # Frontend is CLIENT only - no services block, just namespace
             aws ecs create-service \
               --cluster $ECS_CLUSTER \
               --service-name $FRONTEND_SERVICE \
@@ -326,22 +345,17 @@ jobs:
               --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
               --service-connect-configuration "{\
                 \"enabled\": true,\
-                \"namespace\": \"$ECS_NAMESPACE\",\
-                \"services\": [{\
-                  \"portName\": \"frontend-80\",\
-                  \"discoveryName\": \"$FRONTEND_SERVICE\",\
-                  \"clientAliases\": [{\"port\": 80, \"dnsName\": \"$FRONTEND_SERVICE\"}]\
-                }]\
+                \"namespace\": \"$ECS_NAMESPACE\"\
               }" \
               --region ${{ env.AWS_REGION }} \
-              --tags key=Service,value=frontend key=Environment,value=${{ env.ENVIRONMENT }}
+              --tags key=Service,value=frontend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
           fi
           echo "Frontend service ready"
 
       - name: Verify Deployment
         run: |
           echo "Waiting for services to stabilize..."
-          sleep 130
+          sleep 90
 
           BACKEND_STATUS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
