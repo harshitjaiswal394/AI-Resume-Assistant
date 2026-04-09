@@ -157,18 +157,22 @@ jobs:
           docker tag frontend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest
           docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest
 
-      - name: Prepare Backend Task Definition (jq)
+      - name: Prepare Backend Task Definition
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$BACKEND_SERVICE"
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_BACKEND_REPO:latest"
+          API_URL="http://$BACKEND_SERVICE.$ECS_NAMESPACE:8000"
 
           jq \
             --arg IMAGE "$IMAGE" \
             --arg LOG_GROUP "$LOG_GROUP" \
             --arg AWS_REGION "$AWS_REGION" \
-            --arg ENVIRONMENT "${{ github.event.inputs.environment }}" \
-            --arg API_URL "http://$BACKEND_SERVICE.$ECS_NAMESPACE:8000" \
-            --arg NVIDIA_API_KEY "${{ secrets.NVIDIA_API_KEY }}" \
+            --arg ENVIRONMENT "$ENVIRONMENT" \
+            --arg API_URL "$API_URL" \
+            --arg NVIDIA_API_KEY "$NVIDIA_API_KEY" \
             '
             .containerDefinitions[0].image = $IMAGE |
             .containerDefinitions[0].logConfiguration.options["awslogs-group"] = $LOG_GROUP |
@@ -180,7 +184,9 @@ jobs:
             ]
             ' backend/backend-task.json > backend-task-final.json
 
-      - name: Prepare Frontend Task Definition (jq)
+      - name: Prepare Frontend Task Definition
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$FRONTEND_SERVICE"
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest"
@@ -189,7 +195,7 @@ jobs:
             --arg IMAGE "$IMAGE" \
             --arg LOG_GROUP "$LOG_GROUP" \
             --arg AWS_REGION "$AWS_REGION" \
-            --arg ENVIRONMENT "${{ github.event.inputs.environment }}" \
+            --arg ENVIRONMENT "$ENVIRONMENT" \
             '
             .containerDefinitions[0].image = $IMAGE |
             .containerDefinitions[0].logConfiguration.options["awslogs-group"] = $LOG_GROUP |
@@ -201,26 +207,31 @@ jobs:
 
       - name: Register Task Definitions
         run: |
-          aws ecs register-task-definition --cli-input-json file://backend/backend-task-final.json
-          aws ecs register-task-definition --cli-input-json file://frontend/frontend-task-final.json
+          aws ecs register-task-definition --cli-input-json file://backend-task-final.json
+          aws ecs register-task-definition --cli-input-json file://frontend-task-final.json
 
       - name: Get VPC and Subnet Info
         run: |
           DEFAULT_VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text --region ${{ env.AWS_REGION }})
           SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$DEFAULT_VPC --query 'Subnets[*].SubnetId' --output text --region ${{ env.AWS_REGION }})
           SUBNET_ARRAY=$(echo $SUBNETS | awk '{print $1}')
-          
+
           echo "DEFAULT_VPC=$DEFAULT_VPC" >> $GITHUB_ENV
           echo "SUBNETS=$SUBNETS" >> $GITHUB_ENV
           echo "SUBNET_ARRAY=$SUBNET_ARRAY" >> $GITHUB_ENV
-          
+
           echo "VPC: $DEFAULT_VPC"
           echo "Subnets: $SUBNETS"
 
       - name: Create/Update Backend Service
         run: |
-          SERVICE_EXISTS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $BACKEND_SERVICE --region ${{ env.AWS_REGION }} --query 'services[0].serviceName' --output text 2>/dev/null)
-          
+          SERVICE_EXISTS=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $BACKEND_SERVICE \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].serviceName' \
+            --output text 2>/dev/null)
+
           if [ "$SERVICE_EXISTS" == "$BACKEND_SERVICE" ]; then
             echo "Updating existing Backend service"
             aws ecs update-service \
@@ -232,14 +243,16 @@ jobs:
               --region ${{ env.AWS_REGION }}
           else
             echo "Creating new Backend service with Service Connect"
-            
-            # Get VPC security group (default)
-            SG_ID=$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default --query 'SecurityGroups[0].GroupId' --output text --region ${{ env.AWS_REGION }})
-            
-            # Create subnet list parameter
+
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default \
+              --query 'SecurityGroups[0].GroupId' \
+              --output text \
+              --region ${{ env.AWS_REGION }})
+
             SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
-            
-                aws ecs create-service \
+
+            aws ecs create-service \
               --cluster $ECS_CLUSTER \
               --service-name $BACKEND_SERVICE \
               --task-definition backend \
@@ -263,8 +276,13 @@ jobs:
 
       - name: Create/Update Frontend Service
         run: |
-          SERVICE_EXISTS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $FRONTEND_SERVICE --region ${{ env.AWS_REGION }} --query 'services[0].serviceName' --output text 2>/dev/null)
-          
+          SERVICE_EXISTS=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $FRONTEND_SERVICE \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].serviceName' \
+            --output text 2>/dev/null)
+
           if [ "$SERVICE_EXISTS" == "$FRONTEND_SERVICE" ]; then
             echo "Updating existing Frontend service"
             aws ecs update-service \
@@ -276,13 +294,15 @@ jobs:
               --region ${{ env.AWS_REGION }}
           else
             echo "Creating new Frontend service with Service Connect"
-            
-            # Get VPC security group (default)
-            SG_ID=$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default --query 'SecurityGroups[0].GroupId' --output text --region ${{ env.AWS_REGION }})
-            
-            # Create subnet list parameter
+
+            SG_ID=$(aws ec2 describe-security-groups \
+              --filters Name=vpc-id,Values=${{ env.DEFAULT_VPC }} Name=group-name,Values=default \
+              --query 'SecurityGroups[0].GroupId' \
+              --output text \
+              --region ${{ env.AWS_REGION }})
+
             SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
-            
+
             aws ecs create-service \
               --cluster $ECS_CLUSTER \
               --service-name $FRONTEND_SERVICE \
@@ -309,41 +329,38 @@ jobs:
         run: |
           echo "Waiting for services to stabilize..."
           sleep 90
-          
-          # Check Backend Service
+
           BACKEND_STATUS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $BACKEND_SERVICE \
             --region ${{ env.AWS_REGION }} \
             --query 'services[0].status' \
             --output text)
-          
-          # Check Frontend Service
+
           FRONTEND_STATUS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $FRONTEND_SERVICE \
             --region ${{ env.AWS_REGION }} \
             --query 'services[0].status' \
             --output text)
-          
+
           echo "Backend Service Status: $BACKEND_STATUS"
           echo "Frontend Service Status: $FRONTEND_STATUS"
-          
-          # Check running tasks
+
           BACKEND_TASKS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $BACKEND_SERVICE \
             --region ${{ env.AWS_REGION }} \
             --query 'services[0].runningCount' \
             --output text)
-          
+
           FRONTEND_TASKS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
             --services $FRONTEND_SERVICE \
             --region ${{ env.AWS_REGION }} \
             --query 'services[0].runningCount' \
             --output text)
-          
+
           echo "Backend Running Tasks: $BACKEND_TASKS"
           echo "Frontend Running Tasks: $FRONTEND_TASKS"
 
