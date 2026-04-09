@@ -4,6 +4,14 @@ An AI-powered resume assistant that lets you interact with your resume like Chat
 
 ---
 
+## 🚀 UI Preview
+
+![JobGPT UI](./JobGPT-Assist.png)
+
+## 🚀 Console Preview
+
+![Console UI](./image.png)
+
 ##  Overview
 
 JobGPT Resume AI is a full-stack application that:

@@ -13,9 +13,11 @@ RUN apt-get update && apt-get install curl wget -y && rm -fr /var/lib/apt/lists/
 RUN npm run build
 
 # Stage 2: Serve using nginx
+
 FROM nginx:alpine
 
 COPY --from=build /app/build /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

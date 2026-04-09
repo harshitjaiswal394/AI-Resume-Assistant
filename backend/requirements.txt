@@ -1,5 +1,7 @@
 python-dotenv
 fastapi
+reportlab
+pytest
 uvicorn
 pdfplumber
 openai

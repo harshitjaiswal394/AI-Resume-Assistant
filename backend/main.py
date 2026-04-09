@@ -1,21 +1,33 @@
+import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (for local development)
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 from fastapi import FastAPI, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from parser import parse_resume
-from llm import ask_llm
-from fastapi import Body
+from llm import ask_llm, ask_llm_with_history
 
 
 app = FastAPI()
+chat_history = []
 
-# ✅ CORS (important)
+# CORS Configuration - Environment-based for flexibility
+#CORS_ORIGINS = os.getenv(
+#    "CORS_ORIGINS",
+#    "http://localhost:3000,http://127.0.0.1:3000,http://frontend-service.jobgpt"
+#).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -29,7 +41,7 @@ async def upload_resume(file: UploadFile = File(...)):
     content = await file.read()
     resume_text = parse_resume(content)
 
-    print("✅ Resume loaded:", len(resume_text))
+    logging.info(f" Resume loaded: {len(resume_text)} characters")
 
     return {"message": "Resume uploaded successfully"}
 
@@ -37,9 +49,8 @@ async def upload_resume(file: UploadFile = File(...)):
 @app.post("/ask")
 def ask_question(data: dict = Body(...)):
     question = data.get("question")
-
-    print("👉 Question:", question)
-    print("👉 Resume exists:", bool(resume_text))
+    logging.info(f" Question received: {question}")
+    logging.info(f" Resume exists: {bool(resume_text)}")
 
     if not question:
         return {"answer": "Please enter a question."}
@@ -47,11 +58,18 @@ def ask_question(data: dict = Body(...)):
     if not resume_text:
         return {"answer": "Please upload resume first."}
 
-    answer = ask_llm(question, resume_text)
+    try:
+        answer = ask_llm(question, resume_text)
+        logging.info(f" Answer generated: {answer[:100]}...")
+        return {"answer": answer}
+    except Exception as e:
+        logging.error(f" Error generating answer: {str(e)}")
+        return {"answer": " Unable to generate a response due to an error. Please try again later."}
+        
 
-    if answer:
-        print("👉 Answer:", str(answer)[:100])
-    else:
-        print("⚠️ No answer returned")
-
-    return {"answer": answer or "⚠️ No response from AI"}
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "service": "backend"
+    }
