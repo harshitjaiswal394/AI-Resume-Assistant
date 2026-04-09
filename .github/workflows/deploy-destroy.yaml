@@ -110,9 +110,9 @@ jobs:
           --password-stdin \
           $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-      - name: Create ECR Repositories (if not exists)
+      - name: Create ECR Repositories
         run: |
-          for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
+          for repo in $ECR_BACKEND_REPO $ECR_FRONTEND_REPO
           do
             EXISTS=$(aws ecr describe-repositories \
               --repository-names $repo \
@@ -120,10 +120,8 @@ jobs:
               --output text 2>/dev/null || echo "NOT_FOUND")
 
             if [ "$EXISTS" = "NOT_FOUND" ]; then
-              echo "Creating ECR repo: $repo"
               aws ecr create-repository --repository-name $repo
-            else
-              echo "ECR repo exists: $repo"
+              sleep 12
             fi
           done
 
@@ -149,6 +147,60 @@ jobs:
         run: |
           aws ecs register-task-definition --cli-input-json file://backend/backend-task.json
           aws ecs register-task-definition --cli-input-json file://frontend/frontend-task.json
+
+      - name: Create/Update Backend Service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $BACKEND_SERVICE \
+            --task-definition backend \
+            --force-new-deployment || \
+          aws ecs create-service \
+            --cluster $ECS_CLUSTER \
+            --service-name $BACKEND_SERVICE \
+            --task-definition backend \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$(aws ec2 describe-subnets --query 'Subnets[*].SubnetId' --output text | sed 's/ /\",\"/g')],assignPublicIp=ENABLED}" \
+            --service-connect-configuration "{
+              \"enabled\": true,
+              \"namespace\": \"$ECS_NAMESPACE\",
+              \"services\": [{
+                \"portName\": \"backend-8000\",
+                \"discoveryName\": \"$BACKEND_SERVICE\",
+                \"clientAliases\": [{
+                  \"port\": 8000,
+                  \"dnsName\": \"$BACKEND_SERVICE\"
+                }]
+              }]
+            }"
+
+      - name: Create/Update Frontend Service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $FRONTEND_SERVICE \
+            --task-definition frontend \
+            --force-new-deployment || \
+          aws ecs create-service \
+            --cluster $ECS_CLUSTER \
+            --service-name $FRONTEND_SERVICE \
+            --task-definition frontend \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$(aws ec2 describe-subnets --query 'Subnets[*].SubnetId' --output text | sed 's/ /\",\"/g')],assignPublicIp=ENABLED}" \
+            --service-connect-configuration "{
+              \"enabled\": true,
+              \"namespace\": \"$ECS_NAMESPACE\",
+              \"services\": [{
+                \"portName\": \"frontend-80\",
+                \"discoveryName\": \"$FRONTEND_SERVICE\",
+                \"clientAliases\": [{
+                  \"port\": 80,
+                  \"dnsName\": \"$FRONTEND_SERVICE\"
+                }]
+              }]
+            }"
 
 # =========================
 # DESTROY JOB
