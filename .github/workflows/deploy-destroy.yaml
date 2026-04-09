@@ -157,9 +157,20 @@ jobs:
           docker tag frontend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest
           docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest
 
+      - name: Debug Task Def Inputs
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          echo "ENVIRONMENT='$ENVIRONMENT'"
+          echo "ECS_CLUSTER='$ECS_CLUSTER'"
+          echo "BACKEND_SERVICE='$BACKEND_SERVICE'"
+          echo "AWS_REGION='$AWS_REGION'"
+          echo "NVIDIA_API_KEY length: ${#NVIDIA_API_KEY}"
+
       - name: Prepare Backend Task Definition
         env:
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$BACKEND_SERVICE"
@@ -170,7 +181,7 @@ jobs:
             --arg IMAGE "$IMAGE" \
             --arg LOG_GROUP "$LOG_GROUP" \
             --arg AWS_REGION "$AWS_REGION" \
-            --arg ENVIRONMENT "$ENVIRONMENT" \
+            --arg ENVIRONMENT "${ENVIRONMENT:-dev}" \
             --arg API_URL "$API_URL" \
             --arg NVIDIA_API_KEY "$NVIDIA_API_KEY" \
             '
@@ -186,7 +197,7 @@ jobs:
 
       - name: Prepare Frontend Task Definition
         env:
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$FRONTEND_SERVICE"
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest"
@@ -195,7 +206,7 @@ jobs:
             --arg IMAGE "$IMAGE" \
             --arg LOG_GROUP "$LOG_GROUP" \
             --arg AWS_REGION "$AWS_REGION" \
-            --arg ENVIRONMENT "$ENVIRONMENT" \
+            --arg ENVIRONMENT "${ENVIRONMENT:-dev}" \
             '
             .containerDefinitions[0].image = $IMAGE |
             .containerDefinitions[0].logConfiguration.options["awslogs-group"] = $LOG_GROUP |
