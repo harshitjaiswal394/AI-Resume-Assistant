@@ -189,7 +189,7 @@ jobs:
             done
           fi
 
-            - name: Delete Namespace
+      - name: Delete Namespace
         run: |
           NS_ID=$(aws servicediscovery list-namespaces \
             --query "Namespaces[?Name=='${{ env.ECS_NAMESPACE }}'].Id" \
