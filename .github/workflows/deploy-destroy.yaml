@@ -5,7 +5,7 @@ run-name: >-
     github.event.inputs.destroy == 'true'
     && format('💣 Destroy Infra {0}', github.event.inputs.environment)
     || format('🚀 Deploy Infra {0}', github.event.inputs.environment)
-  }
+  }}
 
 
 on:
