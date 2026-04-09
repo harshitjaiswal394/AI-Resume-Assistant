@@ -10,7 +10,7 @@ on:
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-  ECS_CLUSTER: jobgpt-assistant
+  ECS_CLUSTER: jobgpt-assist
   ECS_NAMESPACE: jobgpt
   BACKEND_SERVICE: backend-service
   FRONTEND_SERVICE: frontend-service
