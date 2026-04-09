@@ -1,0 +1,133 @@
+name: 💣 Destroy AWS ECS Resources
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  ECS_CLUSTER: jobgpt-assist-1
+  ECS_NAMESPACE: jobgpt
+  BACKEND_SERVICE: backend-service
+  FRONTEND_SERVICE: frontend-service
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    #  Delete ECS Services
+    - name: Delete ECS Services
+      run: |
+        for svc in ${{ env.BACKEND_SERVICE }} ${{ env.FRONTEND_SERVICE }}
+        do
+          echo "Processing service: $svc"
+
+          EXISTS=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services $svc \
+            --query 'services[0].status' \
+            --output text 2>/dev/null)
+
+          if [ "$EXISTS" != "None" ]; then
+            echo "Deleting service: $svc"
+
+            aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service $svc \
+              --desired-count 0 || true
+
+            sleep 10
+
+            aws ecs delete-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service $svc \
+              --force || true
+          fi
+        done
+
+    #  Stop Running Tasks
+    - name: Stop Running Tasks
+      run: |
+        TASKS=$(aws ecs list-tasks \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --query 'taskArns[]' \
+          --output text)
+
+        for task in $TASKS
+        do
+          echo "Stopping task: $task"
+          aws ecs stop-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task $task || true
+        done
+
+    #  Delete ECS Cluster
+    - name: Delete ECS Cluster
+      run: |
+        aws ecs delete-cluster \
+          --cluster ${{ env.ECS_CLUSTER }} || true
+
+    #  Delete Service Connect Namespace (Cloud Map)
+    - name: Delete Service Discovery Namespace
+      run: |
+        NS_ID=$(aws servicediscovery list-namespaces \
+          --query "Namespaces[?Name=='${{ env.ECS_NAMESPACE }}'].Id" \
+          --output text)
+
+        if [ ! -z "$NS_ID" ]; then
+          echo "Deleting namespace: $NS_ID"
+          aws servicediscovery delete-namespace --id $NS_ID || true
+        fi
+
+    #  Delete CloudWatch Logs
+    - name: Delete Log Groups
+      run: |
+        aws logs delete-log-group --log-group-name /ecs/jobgpt-backend || true
+        aws logs delete-log-group --log-group-name /ecs/jobgpt-frontend || true
+
+    #  Delete ECR Images ()
+    - name: Delete ECR Images
+      run: |
+        for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
+        do
+          echo "Cleaning repo: $repo"
+
+          IMAGES=$(aws ecr list-images \
+            --repository-name $repo \
+            --query 'imageIds[*]' \
+            --output json)
+
+          if [ "$IMAGES" != "[]" ]; then
+            aws ecr batch-delete-image \
+              --repository-name $repo \
+              --image-ids "$IMAGES" || true
+          fi
+        done
+
+    #   Check (Optional)
+    - name: Check Remaining Resources
+      run: |
+        echo "Remaining ECS Clusters:"
+        aws ecs list-clusters
+
+        echo "Remaining Services:"
+        aws ecs list-services --cluster ${{ env.ECS_CLUSTER }} || true
+
+        echo "Remaining ECR Repos:"
+        aws ecr describe-repositories || true
+
+        echo "Remaining Load Balancers:"
+        aws elbv2 describe-load-balancers || true
+
+        echo "Cleanup complete ✅"
