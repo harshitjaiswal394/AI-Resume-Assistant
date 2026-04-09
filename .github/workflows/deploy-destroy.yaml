@@ -340,7 +340,7 @@ jobs:
       - name: Verify Deployment
         run: |
           echo "Waiting for services to stabilize..."
-          sleep 90
+          sleep 180
 
           BACKEND_STATUS=$(aws ecs describe-services \
             --cluster $ECS_CLUSTER \
