@@ -201,6 +201,7 @@ jobs:
         run: |
           LOG_GROUP="/ecs/$ECS_CLUSTER/$FRONTEND_SERVICE"
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_FRONTEND_REPO:latest"
+          BACKEND_URL="http://$BACKEND_SERVICE:8000"
 
           jq \
             --arg IMAGE "$IMAGE" \
