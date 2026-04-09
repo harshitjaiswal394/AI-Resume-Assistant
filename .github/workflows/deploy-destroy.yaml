@@ -122,9 +122,28 @@ jobs:
             if [ "$EXISTS" = "NOT_FOUND" ]; then
               echo "Creating ECR repo: $repo"
               aws ecr create-repository --repository-name $repo
-              sleep 12
+              sleep 10
             else
               echo "ECR repo exists: $repo"
+            fi
+          done
+          
+      - name: Create CloudWatch Log Groups
+        run: |
+          for svc in $BACKEND_SERVICE $FRONTEND_SERVICE
+          do
+            LOG_GROUP="/ecs/$ECS_CLUSTER/$svc"
+
+            EXISTS=$(aws logs describe-log-groups \
+              --log-group-name-prefix $LOG_GROUP \
+              --query 'logGroups[0].logGroupName' \
+              --output text 2>/dev/null)
+
+            if [ "$EXISTS" != "$LOG_GROUP" ]; then
+              echo "Creating log group: $LOG_GROUP"
+              aws logs create-log-group --log-group-name $LOG_GROUP
+            else
+              echo "Log group exists: $LOG_GROUP"
             fi
           done
 
@@ -160,7 +179,7 @@ jobs:
         run: |
           SERVICE_EXISTS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $BACKEND_SERVICE --region ${{ env.AWS_REGION }} --query 'services[0].serviceName' --output text 2>/dev/null)
           
-          if [ "$SERVICE_EXISTS" == $BACKEND_SERVICE }}" ]; then
+          if [ "$SERVICE_EXISTS" == "$BACKEND_SERVICE" ]; then
             echo "Updating existing Backend service"
             aws ecs update-service \
               --cluster $ECS_CLUSTER \
@@ -196,7 +215,7 @@ jobs:
                 }]\
               }" \
               --region ${{ env.AWS_REGION }} \
-              --tags key=Service,value=backend key=Environment,value=${{ env.ENVIRONMENT }}
+              --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment }}
           fi
           echo "Backend service ready"
 
@@ -390,8 +409,10 @@ jobs:
 
       - name: Cleanup Logs
         run: |
-          aws logs delete-log-group --log-group-name /ecs/jobgpt-backend || true
-          aws logs delete-log-group --log-group-name /ecs/jobgpt-frontend || true
+          for svc in $BACKEND_SERVICE $FRONTEND_SERVICE
+          do
+            aws logs delete-log-group --log-group-name /ecs/$ECS_CLUSTER/$svc || true
+          done
 
       - name: Done
         run: echo " Cleanup complete"
