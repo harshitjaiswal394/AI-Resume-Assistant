@@ -7,12 +7,6 @@ run-name: >-
     || format('🚀 Deploy {0}', github.event.inputs.environment)
   }}
 
-run-name: >-
-  ${{ 
-    github.event_name == 'workflow_dispatch' && github.event.inputs.destroy == 'true'
-    && '💣 Destroy AWS ECS'
-    || '🚀 Deploy AWS ECS'
-  }}
 
 on:
   pull_request:
