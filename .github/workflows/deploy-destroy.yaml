@@ -1,0 +1,182 @@
+name: 🚀 Deploy / Destroy AWS ECS
+
+on:
+  push:
+    branches:
+      - dev
+      - hotfix1
+
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: "Set true to destroy infrastructure"
+        required: true
+        default: "false"
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECS_CLUSTER: jobgpt-assist-1
+  ECS_NAMESPACE: jobgpt
+  BACKEND_SERVICE: backend-service
+  FRONTEND_SERVICE: frontend-service
+  ENVIRONMENT: dev
+
+jobs:
+
+# =========================
+#  DEPLOY JOB
+# =========================
+  deploy:
+    if: ${{ github.event_name == 'push' || github.event.inputs.destroy != 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Create ECS Cluster
+      run: |
+        CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --query 'clusters[0].clusterName' --output text 2>/dev/null)
+
+        if [ "$CLUSTER_EXISTS" != "${{ env.ECS_CLUSTER }}" ]; then
+          aws ecs create-cluster --cluster-name ${{ env.ECS_CLUSTER }}
+        fi
+
+    - name: Create Namespace
+      run: |
+        NAMESPACE_EXISTS=$(aws servicediscovery list-namespaces \
+          --query "Namespaces[?Name=='${{ env.ECS_NAMESPACE }}'].Id" \
+          --output text)
+
+        if [ -z "$NAMESPACE_EXISTS" ]; then
+          aws servicediscovery create-private-dns-namespace \
+            --name ${{ env.ECS_NAMESPACE }} \
+            --vpc $(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
+        fi
+
+    - name: Login to ECR
+      run: |
+        aws ecr get-login-password | docker login --username AWS --password-stdin \
+        ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+    - name: Build & Push Backend
+      run: |
+        docker build -t backend ./backend
+        docker tag backend:latest ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+        docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPO }}:latest
+
+    - name: Build & Push Frontend
+      run: |
+        docker build -t frontend ./frontend
+        docker tag frontend:latest ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+        docker push ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_FRONTEND_REPO }}:latest
+
+    - name: Register Task Definitions
+      run: |
+        aws ecs register-task-definition --cli-input-json file://backend/backend-task.json
+        aws ecs register-task-definition --cli-input-json file://frontend/frontend-task.json
+
+    - name: Create/Update Backend Service
+      run: |
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.BACKEND_SERVICE }} \
+          --task-definition backend \
+          --force-new-deployment || \
+        aws ecs create-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service-name ${{ env.BACKEND_SERVICE }} \
+          --task-definition backend \
+          --desired-count 1 \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[$(aws ec2 describe-subnets --query 'Subnets[*].SubnetId' --output text | sed 's/ /","/g')],assignPublicIp=ENABLED}" \
+          --service-connect-configuration "{\"enabled\": true,\"namespace\": \"${{ env.ECS_NAMESPACE }}\",\"services\": [{\"portName\": \"backend-8000\",\"discoveryName\": \"backend-service\",\"clientAliases\": [{\"port\": 8000,\"dnsName\": \"backend-service\"}]}]}"
+
+    - name: Create/Update Frontend Service
+      run: |
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.FRONTEND_SERVICE }} \
+          --task-definition frontend \
+          --force-new-deployment || \
+        aws ecs create-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service-name ${{ env.FRONTEND_SERVICE }} \
+          --task-definition frontend \
+          --desired-count 1 \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[$(aws ec2 describe-subnets --query 'Subnets[*].SubnetId' --output text | sed 's/ /","/g')],assignPublicIp=ENABLED}" \
+          --service-connect-configuration "{\"enabled\": true,\"namespace\": \"${{ env.ECS_NAMESPACE }}\",\"services\": [{\"portName\": \"frontend-80\",\"discoveryName\": \"frontend-service\",\"clientAliases\": [{\"port\": 80,\"dnsName\": \"frontend-service\"}]}]}"
+
+# =========================
+#  DESTROY JOB
+# =========================
+  destroy:
+    if: ${{ github.event.inputs.destroy == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Delete Services
+      run: |
+        for svc in ${{ env.BACKEND_SERVICE }} ${{ env.FRONTEND_SERVICE }}
+        do
+          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service $svc --desired-count 0 || true
+          sleep 10
+          aws ecs delete-service --cluster ${{ env.ECS_CLUSTER }} --service $svc --force || true
+        done
+
+    - name: Stop Tasks
+      run: |
+        TASKS=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --query 'taskArns[]' --output text)
+        for task in $TASKS; do
+          aws ecs stop-task --cluster ${{ env.ECS_CLUSTER }} --task $task || true
+        done
+
+    - name: Delete Cluster
+      run: |
+        aws ecs delete-cluster --cluster ${{ env.ECS_CLUSTER }} || true
+
+    - name: Delete Namespace
+      run: |
+        NS_ID=$(aws servicediscovery list-namespaces --query "Namespaces[?Name=='${{ env.ECS_NAMESPACE }}'].Id" --output text)
+        if [ ! -z "$NS_ID" ]; then
+          aws servicediscovery delete-namespace --id $NS_ID || true
+        fi
+
+    - name: Cleanup Logs
+      run: |
+        aws logs delete-log-group --log-group-name /ecs/jobgpt-backend || true
+        aws logs delete-log-group --log-group-name /ecs/jobgpt-frontend || true
+
+    - name: Cleanup ECR Images
+      run: |
+        for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
+        do
+          IMAGES=$(aws ecr list-images --repository-name $repo --query 'imageIds[*]' --output json)
+          if [ "$IMAGES" != "[]" ]; then
+            aws ecr batch-delete-image --repository-name $repo --image-ids "$IMAGES" || true
+          fi
+        done
+
+    - name: Done
+      run: echo " Cleanup complete"
