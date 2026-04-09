@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - hotfix1
   workflow_dispatch:
 
 env:
@@ -168,7 +169,7 @@ jobs:
           # Create subnet list parameter
           SUBNET_LIST=$(echo ${{ env.SUBNETS }} | awk '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF ? "," : "")}')
           
-          aws ecs create-service \
+              aws ecs create-service \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service-name ${{ env.BACKEND_SERVICE }} \
             --task-definition backend \
