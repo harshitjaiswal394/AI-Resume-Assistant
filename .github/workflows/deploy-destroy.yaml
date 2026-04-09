@@ -160,7 +160,6 @@ jobs:
               --output text)
 
             for svc in $SERVICES; do
-              echo "Deleting Cloud Map service: $svc"
               aws servicediscovery delete-service --id $svc || true
             done
           fi
@@ -183,10 +182,7 @@ jobs:
         run: |
           for repo in ${{ secrets.ECR_BACKEND_REPO }} ${{ secrets.ECR_FRONTEND_REPO }}
           do
-            echo "Deleting ECR repo: $repo"
-            aws ecr delete-repository \
-              --repository-name $repo \
-              --force || true
+            aws ecr delete-repository --repository-name $repo --force || true
           done
 
       - name: Cleanup Logs
@@ -195,4 +191,4 @@ jobs:
           aws logs delete-log-group --log-group-name /ecs/jobgpt-frontend || true
 
       - name: Done
-        run: echo " FULL CLEANUP COMPLETE"
+        run: echo "💣 FULL CLEANUP COMPLETE"
