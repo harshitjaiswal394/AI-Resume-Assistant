@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name": "backend-container",
-      "image": "716608655181.dkr.ecr.us-east-1.amazonaws.com/jobgpt-backend:latest",
+      "image": "__IMAGE__",
       "essential": true,
       "portMappings": [
         {
@@ -18,12 +18,7 @@
           "protocol": "tcp"
         }
       ],
-      "environment": [
-        {
-          "name": "NVIDIA_API_KEY",
-          "value": "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"
-        }
-      ],
+      "environment": __ENV_VARS__,
       "healthCheck": {
         "command": [
           "CMD-SHELL",
@@ -37,8 +32,8 @@
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/jobgpt-backend",
-          "awslogs-region": "us-east-1",
+          "awslogs-group": "__LOG_GROUP__",
+          "awslogs-region": "__AWS_REGION__",
           "awslogs-stream-prefix": "ecs"
         }
       }

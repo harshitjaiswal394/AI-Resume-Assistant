@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name": "frontend-container",
-      "image": "716608655181.dkr.ecr.us-east-1.amazonaws.com/jobgpt-frontend:latest",
+      "image": "__IMAGE__",
       "essential": true,
       "portMappings": [
         {
@@ -31,8 +31,8 @@
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/jobgpt-frontend",
-          "awslogs-region": "us-east-1",
+          "awslogs-group": "__LOG_GROUP__",
+          "awslogs-region": "__LOG_GROUP__",
           "awslogs-stream-prefix": "ecs"
         }
       }
