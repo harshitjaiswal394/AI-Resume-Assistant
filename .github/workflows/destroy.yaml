@@ -1,9 +1,6 @@
 name: 💣 Destroy AWS ECS Resources
 
 on:
-  push:
-    branches:
-      - hotfix1
   workflow_dispatch:
 
 env:
@@ -22,12 +19,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Configure AWS
+    - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
     #  Delete ECS Services
     - name: Delete ECS Services
