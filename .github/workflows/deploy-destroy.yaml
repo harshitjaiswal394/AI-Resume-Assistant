@@ -366,7 +366,7 @@ jobs:
               }" \
               --region ${{ env.AWS_REGION }} \
               --tags key=Service,value=frontend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
-
+          fi
           echo "Frontend service ready"
 
       - name: Verify Deployment
