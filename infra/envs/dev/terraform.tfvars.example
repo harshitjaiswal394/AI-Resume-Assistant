@@ -1,0 +1,12 @@
+aws_region             = "us-east-1"
+project_name           = "jobgpt"
+environment            = "dev"
+backend_cpu            = 256
+backend_memory         = 512
+frontend_cpu           = 256
+frontend_memory        = 512
+backend_desired_count  = 1
+frontend_desired_count = 1
+backend_image_tag      = "latest"
+frontend_image_tag     = "latest"
+nvidia_api_key         = "replace-me"
