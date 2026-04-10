@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project now supports Terraform-based deployment for the `dev` environment on AWS ECS Fargate.
+This project now supports Terraform-based deployment for multiple environments on AWS ECS Fargate.
 
 Terraform manages the infrastructure and GitHub Actions manages the deployment flow.
 
@@ -19,20 +19,26 @@ Current Terraform coverage includes:
 - ECS task definitions
 - ECS services
 
-Current environment implemented:
+Current environments implemented:
 
 - `dev`
+- `test`
+- `prod`
 
 Infrastructure code location:
 
 - `infra/`
 
-Terraform environment stack:
+Terraform environment stacks:
 
 - `infra/envs/dev`
+- `infra/envs/test`
+- `infra/envs/prod`
 
 GitHub Actions workflows:
 
+- `.github/workflows/terraform-pr-plan.yaml`
+- `.github/workflows/terraform-promotion.yaml`
 - `.github/workflows/deploy-terraform-dev.yaml`
 - `.github/workflows/destroy-terraform-dev.yaml`
 
@@ -106,9 +112,11 @@ This means you do not need to create ECS services manually from the AWS console 
 
 This setup uses an S3 backend for Terraform state.
 
-State object key:
+State object keys:
 
 - `jobgpt/dev/terraform.tfstate`
+- `jobgpt/test/terraform.tfstate`
+- `jobgpt/prod/terraform.tfstate`
 
 This setup currently uses:
 
@@ -220,18 +228,122 @@ infra/
       terraform.tfvars.example
       variables.tf
       versions.tf
+    test/
+      backend.tf
+      main.tf
+      outputs.tf
+      providers.tf
+      terraform.tfvars.example
+      variables.tf
+      versions.tf
+    prod/
+      backend.tf
+      main.tf
+      outputs.tf
+      providers.tf
+      terraform.tfvars.example
+      variables.tf
+      versions.tf
 ```
 
 ### Reusable modules
 
-The modules were created so the same pattern can later be reused for:
+The modules are reused by:
 
+- `dev`
 - `test`
 - `prod`
 
 ---
 
-## Deploy Workflow
+## PR Plan Workflow
+
+Workflow file:
+
+- `.github/workflows/terraform-pr-plan.yaml`
+
+Triggers:
+
+- pull requests targeting `main`
+- manual `workflow_dispatch`
+
+### Pull request behavior
+
+When a PR is raised to `main`, the workflow does the following:
+
+1. checks out the repository
+2. configures AWS credentials
+3. initializes Terraform using the S3 backend
+4. validates Terraform
+5. runs `terraform plan`
+
+The PR plan workflow runs for:
+
+- `dev`
+- `test`
+- `prod`
+
+### Manual dispatch behavior
+
+The same workflow also supports manual dispatch with:
+
+- `environment`
+- `apply`
+
+Allowed environment values:
+
+- `dev`
+- `test`
+- `prod`
+
+Manual apply is restricted so that:
+
+- only `dev` can be applied directly from this workflow
+- `apply=true` must be selected
+
+---
+
+## Promotion Workflow
+
+Workflow file:
+
+- `.github/workflows/terraform-promotion.yaml`
+
+Trigger:
+
+- PR merged into `main`
+
+### Promotion flow
+
+When a PR is merged into `main`, the workflow promotes changes sequentially through:
+
+1. `dev`
+2. `test`
+3. `prod`
+
+For each environment, it performs:
+
+1. `terraform init`
+2. `terraform plan`
+3. waits at the apply stage for GitHub Environment approval
+4. bootstraps shared infrastructure if needed
+5. builds backend and frontend images
+6. pushes images to the environment-specific ECR repositories
+7. runs `terraform apply`
+
+### Approval model
+
+The apply jobs are attached to GitHub Environments:
+
+- `dev`
+- `test`
+- `prod`
+
+If required reviewers are configured for those environments, the workflow pauses before apply and waits for approval.
+
+---
+
+## Legacy Dev Deploy Workflow
 
 Workflow file:
 
@@ -242,36 +354,10 @@ Current trigger:
 - push to `dev-infra`
 - manual `workflow_dispatch`
 
-### Deploy flow
+This workflow can still be used for direct `dev` deployment, but the main PR-based review and promotion model is now:
 
-When the workflow runs, it does the following:
-
-1. checks out the repository
-2. configures AWS credentials
-3. initializes Terraform using the S3 backend
-4. runs Terraform format check
-5. validates Terraform
-6. bootstraps base infrastructure
-7. reads ECR repository URLs from Terraform outputs
-8. builds backend and frontend Docker images
-9. pushes both images to ECR
-10. runs full `terraform apply`
-11. waits for ECS services to become stable
-12. prints deployment outputs such as frontend URL
-
-### Image deployment behavior
-
-The workflow pushes:
-
-- backend image
-- frontend image
-
-to ECR and then Terraform updates the ECS task definitions and services.
-
-The intended deployment model is:
-
-- infrastructure + service definitions in Terraform
-- application rollout through GitHub Actions with Terraform apply
+- PR to `main` for plan
+- merge to `main` for promotion
 
 ---
 
@@ -290,9 +376,16 @@ What it does:
 1. checks out the repository
 2. configures AWS credentials
 3. initializes Terraform against the same S3 state
-4. runs `terraform destroy -auto-approve`
+4. validates the selected environment
+5. runs `terraform destroy -auto-approve`
 
-Use this workflow when you want to tear down the `dev` environment completely.
+Supported environment choices:
+
+- `dev`
+- `test`
+- `prod`
+
+Use this workflow when you want to tear down one selected environment completely.
 
 ---
 
@@ -303,6 +396,8 @@ Even though the normal path is workflow-driven, you can still run Terraform loca
 From:
 
 - `infra/envs/dev`
+- `infra/envs/test`
+- `infra/envs/prod`
 
 Initialize:
 
@@ -462,26 +557,21 @@ There is no inherent issue in merging the Terraform files and workflows into `ma
 
 ### Important current detail
 
-The Terraform deploy workflow currently triggers on:
+After merge to `main`:
 
-- `dev-infra`
-
-not on `main`
-
-So merging to `main` will not automatically deploy `dev` unless you:
-
-- manually run the workflow, or
-- change the workflow trigger branch list
+- the promotion workflow triggers from the merged PR event
+- it progresses through `dev`, `test`, and `prod`
+- apply is gated by GitHub Environment approval if reviewers are configured
 
 ### Recommendation
 
-Merge to `main` if you want the code stored there safely.
+Merge to `main` if you want the PR-driven Terraform plan and promotion model to be the primary deployment path.
 
-Then decide one of these:
+Then configure GitHub Environment approvals for:
 
-1. keep deployment trigger on `dev-infra`
-2. change deployment trigger to `dev`
-3. use `workflow_dispatch` manually
+1. `dev`
+2. `test`
+3. `prod`
 
 The important part is to avoid two different deployment systems managing the same `dev` ECS services simultaneously.
 
@@ -491,12 +581,9 @@ The important part is to avoid two different deployment systems managing the sam
 
 1. Ensure S3 state bucket exists and versioning is enabled
 2. Confirm all required GitHub secrets are present
-3. Merge the Terraform files and workflows into `main`
-4. Decide which branch should trigger the Terraform deploy workflow
-5. Stop using the old non-Terraform `dev` deployment path for the same ECS environment
-6. Reuse the same module structure to create:
-   - `infra/envs/test`
-   - `infra/envs/prod`
+3. Configure GitHub Environment approvals for `dev`, `test`, and `prod`
+4. Merge the Terraform files and workflows into `main`
+5. Stop using the old non-Terraform deployment path for the same ECS environments
 
 ---
 
