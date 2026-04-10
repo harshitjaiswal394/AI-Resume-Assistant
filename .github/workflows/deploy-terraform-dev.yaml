@@ -3,7 +3,7 @@ name: Deploy Dev via Terraform
 on:
   push:
     branches:
-      - dev
+      - dev-infra
   workflow_dispatch:
 
 env:
