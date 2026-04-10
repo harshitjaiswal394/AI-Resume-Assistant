@@ -310,7 +310,6 @@ jobs:
                 }]\
               }" \
               --region ${{ env.AWS_REGION }} \
-              --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment }}
               --tags key=Service,value=backend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
           fi
           echo "Backend service ready"
