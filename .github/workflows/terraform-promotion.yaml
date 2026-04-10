@@ -1,0 +1,366 @@
+name: Terraform Promotion Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  IMAGE_TAG: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+jobs:
+  plan-dev:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra/envs/dev
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        working-directory: infra/envs/dev
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform plan \
+            -var="backend_image_tag=${{ env.IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ env.IMAGE_TAG }}"
+
+  apply-dev:
+    if: github.event.pull_request.merged == true
+    needs: plan-dev
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra/envs/dev
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Bootstrap shared infrastructure
+        working-directory: infra/envs/dev
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -target=module.default_network \
+            -target=module.app_secrets \
+            -target=module.ecr \
+            -target=module.iam \
+            -target=module.cluster \
+            -target=module.security_groups \
+            -target=module.alb
+
+      - name: Export ECR repository URLs
+        working-directory: infra/envs/dev
+        run: |
+          echo "BACKEND_REPO=$(terraform output -raw backend_repository_url)" >> $GITHUB_ENV
+          echo "FRONTEND_REPO=$(terraform output -raw frontend_repository_url)" >> $GITHUB_ENV
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | docker login \
+            --username AWS \
+            --password-stdin \
+            "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$BACKEND_REPO:${IMAGE_TAG}" ./backend
+          docker tag "$BACKEND_REPO:${IMAGE_TAG}" "$BACKEND_REPO:latest"
+          docker push "$BACKEND_REPO:${IMAGE_TAG}"
+          docker push "$BACKEND_REPO:latest"
+
+      - name: Build and push frontend image
+        run: |
+          docker build -t "$FRONTEND_REPO:${IMAGE_TAG}" ./frontend
+          docker tag "$FRONTEND_REPO:${IMAGE_TAG}" "$FRONTEND_REPO:latest"
+          docker push "$FRONTEND_REPO:${IMAGE_TAG}"
+          docker push "$FRONTEND_REPO:latest"
+
+      - name: Terraform Apply
+        working-directory: infra/envs/dev
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -var="backend_image_tag=${{ env.IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ env.IMAGE_TAG }}"
+
+  plan-test:
+    if: github.event.pull_request.merged == true
+    needs: apply-dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra/envs/test
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/test/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        working-directory: infra/envs/test
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform plan \
+            -var="backend_image_tag=${{ env.IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ env.IMAGE_TAG }}"
+
+  apply-test:
+    if: github.event.pull_request.merged == true
+    needs: plan-test
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra/envs/test
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/test/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Bootstrap shared infrastructure
+        working-directory: infra/envs/test
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -target=module.default_network \
+            -target=module.app_secrets \
+            -target=module.ecr \
+            -target=module.iam \
+            -target=module.cluster \
+            -target=module.security_groups \
+            -target=module.alb
+
+      - name: Export ECR repository URLs
+        working-directory: infra/envs/test
+        run: |
+          echo "BACKEND_REPO=$(terraform output -raw backend_repository_url)" >> $GITHUB_ENV
+          echo "FRONTEND_REPO=$(terraform output -raw frontend_repository_url)" >> $GITHUB_ENV
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | docker login \
+            --username AWS \
+            --password-stdin \
+            "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$BACKEND_REPO:${IMAGE_TAG}" ./backend
+          docker tag "$BACKEND_REPO:${IMAGE_TAG}" "$BACKEND_REPO:latest"
+          docker push "$BACKEND_REPO:${IMAGE_TAG}"
+          docker push "$BACKEND_REPO:latest"
+
+      - name: Build and push frontend image
+        run: |
+          docker build -t "$FRONTEND_REPO:${IMAGE_TAG}" ./frontend
+          docker tag "$FRONTEND_REPO:${IMAGE_TAG}" "$FRONTEND_REPO:latest"
+          docker push "$FRONTEND_REPO:${IMAGE_TAG}"
+          docker push "$FRONTEND_REPO:latest"
+
+      - name: Terraform Apply
+        working-directory: infra/envs/test
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -var="backend_image_tag=${{ env.IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ env.IMAGE_TAG }}"
+
+  plan-prod:
+    if: github.event.pull_request.merged == true
+    needs: apply-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra/envs/prod
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/prod/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform plan \
+            -var="backend_image_tag=${{ env.IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ env.IMAGE_TAG }}"
+
+  apply-prod:
+    if: github.event.pull_request.merged == true
+    needs: plan-prod
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra/envs/prod
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/prod/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Bootstrap shared infrastructure
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -target=module.default_network \
+            -target=module.app_secrets \
+            -target=module.ecr \
+            -target=module.iam \
+            -target=module.cluster \
+            -target=module.security_groups \
+            -target=module.alb
+
+      - name: Export ECR repository URLs
+        working-directory: infra/envs/prod
+        run: |
+          echo "BACKEND_REPO=$(terraform output -raw backend_repository_url)" >> $GITHUB_ENV
+          echo "FRONTEND_REPO=$(terraform output -raw frontend_repository_url)" >> $GITHUB_ENV
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | docker login \
+            --username AWS \
+            --password-stdin \
+            "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$BACKEND_REPO:${IMAGE_TAG}" ./backend
+          docker tag "$BACKEND_REPO:${IMAGE_TAG}" "$BACKEND_REPO:latest"
+          docker push "$BACKEND_REPO:${IMAGE_TAG}"
+          docker push "$BACKEND_REPO:latest"
+
+      - name: Build and push frontend image
+        run: |
+          docker build -t "$FRONTEND_REPO:${IMAGE_TAG}" ./frontend
+          docker tag "$FRONTEND_REPO:${IMAGE_TAG}" "$FRONTEND_REPO:latest"
+          docker push "$FRONTEND_REPO:${IMAGE_TAG}"
+          docker push "$FRONTEND_REPO:latest"
+
+      - name: Terraform Apply
+        working-directory: infra/envs/prod
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -var="backend_image_tag=${{ env.IMAGE_TAG }}" \
+            -var="frontend_image_tag=${{ env.IMAGE_TAG }}"

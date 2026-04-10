@@ -1,18 +1,37 @@
-name: Destroy Dev via Terraform
+name: Destroy Terraform Environment
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
 
 env:
-  TF_DIR: infra/envs/dev
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
 jobs:
-  destroy-dev:
+  destroy:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
 
     steps:
+      - name: Validate environment
+        run: |
+          case "${{ inputs.environment }}" in
+            dev|test|prod) ;;
+            *)
+              echo "Invalid environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -29,16 +48,16 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ env.TF_DIR }}
+        working-directory: infra/envs/${{ inputs.environment }}
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=jobgpt/dev/terraform.tfstate" \
+            -backend-config="key=jobgpt/${{ inputs.environment }}/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
       - name: Terraform Destroy
-        working-directory: ${{ env.TF_DIR }}
+        working-directory: infra/envs/${{ inputs.environment }}
         env:
           TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
         run: terraform destroy -auto-approve
