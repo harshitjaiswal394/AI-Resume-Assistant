@@ -36,15 +36,18 @@ locals {
     secrets     = local.secrets_list
   }
 
-  container_definition = var.health_check == null ? local.container_base : merge(local.container_base, {
-    healthCheck = {
-      command     = var.health_check.command
-      interval    = var.health_check.interval
-      timeout     = var.health_check.timeout
-      retries     = var.health_check.retries
-      startPeriod = var.health_check.start_period
+  container_definition = merge(
+    local.container_base,
+    var.health_check == null ? {} : {
+      healthCheck = {
+        command     = var.health_check.command
+        interval    = var.health_check.interval
+        timeout     = var.health_check.timeout
+        retries     = var.health_check.retries
+        startPeriod = var.health_check.start_period
+      }
     }
-  })
+  )
 }
 
 resource "aws_cloudwatch_log_group" "this" {

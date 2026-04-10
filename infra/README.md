@@ -27,6 +27,7 @@ GitHub Actions manages:
 - Docker image build
 - Docker image push
 - Terraform apply with the pushed image tags
+- Terraform destroy for the environment when requested
 
 ## Remote State
 
@@ -40,4 +41,66 @@ Required GitHub secrets for the Terraform deployment workflow:
 - `AWS_REGION`
 - `NVIDIA_API_KEY`
 - `TF_STATE_BUCKET`
-- `TF_STATE_LOCK_TABLE`
+
+## State Storage
+
+This setup uses an S3 backend for Terraform state.
+
+- Create the S3 bucket before running Terraform
+- Enable S3 versioning on the bucket
+- No manual folder creation is needed
+- The workflow uses the object key `jobgpt/dev/terraform.tfstate`
+
+This repository is currently configured for S3-only state storage without DynamoDB locking, which is acceptable for low-concurrency or single-operator usage.
+
+## GitHub Actions Workflows
+
+### Deploy
+
+Workflow file:
+
+- `.github/workflows/deploy-terraform-dev.yaml`
+
+How it runs:
+
+- automatically on push to `dev`
+- manually through `workflow_dispatch`
+
+What it does:
+
+1. Initializes Terraform with the S3 backend
+2. Bootstraps shared infrastructure such as ECR, ECS cluster, namespace, security groups, and ALB
+3. Builds and pushes backend and frontend Docker images
+4. Runs full Terraform apply with the pushed image tags
+5. Waits for ECS services to stabilize
+
+### Destroy
+
+Workflow file:
+
+- `.github/workflows/destroy-terraform-dev.yaml`
+
+How it runs:
+
+- manually through `workflow_dispatch`
+
+What it does:
+
+1. Initializes Terraform with the same S3 backend
+2. Runs `terraform destroy -auto-approve` for the `dev` stack
+
+## Workflow-Only Usage
+
+You do not need to run Terraform locally once the S3 backend and GitHub secrets are configured.
+
+Normal operating model:
+
+1. Push code to the `dev` branch to deploy
+2. Use the `Destroy Dev via Terraform` workflow when you want to tear the environment down
+
+Recommended one-time setup:
+
+1. Create the Terraform state S3 bucket
+2. Enable versioning and encryption on the bucket
+3. Add the required GitHub secrets
+4. Push to `dev` to let the deploy workflow create the environment

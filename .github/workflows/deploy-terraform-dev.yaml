@@ -38,7 +38,6 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=jobgpt/dev/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}" \
             -backend-config="encrypt=true"
 
       - name: Terraform Format Check
