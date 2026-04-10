@@ -363,9 +363,17 @@ jobs:
             --launch-type FARGATE \
             --enable-execute-command \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[\"$SG_ID\"],assignPublicIp=ENABLED}" \
-            --service-connect-configuration "{\
-              \"enabled\": true,\
-              \"namespace\": \"$ECS_NAMESPACE\"\
+            --service-connect-configuration "{
+              \"enabled\": true,
+              \"namespace\": \"$ECS_NAMESPACE\",
+              \"services\": [{
+                \"portName\": \"frontend-80\",
+                \"discoveryName\": \"$FRONTEND_SERVICE\",
+                \"clientAliases\": [{
+                  \"port\": 80,
+                  \"dnsName\": \"$FRONTEND_SERVICE\"
+                }]
+              }]
             }" \
             --region ${{ env.AWS_REGION }} \
             --tags key=Service,value=frontend key=Environment,value=${{ github.event.inputs.environment || 'dev' }}
@@ -374,6 +382,24 @@ jobs:
 
       - name: Verify Deployment
         run: |
+          echo "check service configuration..."
+
+          SERVICE_CONFIG=$(aws ecs describe-services \
+            --cluster dev-jobgpt-cluster \
+            --services dev-backend-service dev-frontend-service \
+            --query 'services[*].{name:serviceName,status:status,serviceConnect:serviceConnectConfiguration}' \
+            --output json)
+
+          echo "Service Configurations: $SERVICE_CONFIG"
+
+          echo "check service discovery..."
+
+          DISCOVERY_BACKEND=$(aws servicediscovery list-services \
+            --filters Name=NAMESPACE_ID,Values=ns-bhwiw2owx2jy2ike \
+            --output json)
+
+          echo "Service Discovery: $DISCOVERY_BACKEND"
+
           echo "Waiting for services to stabilize..."
           sleep 90
 
@@ -521,4 +547,4 @@ jobs:
           done
 
       - name: Done
-        run: echo " Cleanup complete"
+        run: echo "✅ Cleanup complete"
