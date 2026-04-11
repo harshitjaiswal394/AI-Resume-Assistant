@@ -62,6 +62,7 @@ jobs:
             -target=module.ecr \
             -target=module.iam \
             -target=module.cluster \
+            -target=module.alb \
             -target=module.security_groups
 
       - name: Export ECR repos
