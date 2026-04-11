@@ -18,6 +18,7 @@ jobs:
 # =========================
   terraform-plan:
     runs-on: ubuntu-latest
+    environment: dev
 
     outputs:
       plan_status: success
