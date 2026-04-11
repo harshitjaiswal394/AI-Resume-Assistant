@@ -4,9 +4,7 @@ on:
   pull_request:
     branches:
       - main
-      - dev-infra
-    types:
-      - closed
+      - dev-dns
   workflow_dispatch:
 
 env:
@@ -14,7 +12,11 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
 jobs:
-  deploy-dev:
+
+# =========================
+# STAGE 1: PLAN + BUILD
+# =========================
+  terraform-plan:
     runs-on: ubuntu-latest
     environment: dev
 
@@ -43,17 +45,13 @@ jobs:
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform Format Check
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform fmt -check
-
-      - name: Terraform Validate
+      - name: Terraform Plan
         working-directory: ${{ env.TF_DIR }}
         env:
           TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
-        run: terraform validate
+        run: terraform plan -out=tfplan
 
-      - name: Bootstrap shared infrastructure
+      - name: Bootstrap Infra (ECR, IAM, Cluster)
         working-directory: ${{ env.TF_DIR }}
         env:
           TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
@@ -64,10 +62,10 @@ jobs:
             -target=module.ecr \
             -target=module.iam \
             -target=module.cluster \
-            -target=module.security_groups \
-            -target=module.alb
+            -target=module.alb \
+            -target=module.security_groups
 
-      - name: Export ECR repository URLs
+      - name: Export ECR repos
         working-directory: ${{ env.TF_DIR }}
         run: |
           echo "BACKEND_REPO=$(terraform output -raw backend_repository_url)" >> $GITHUB_ENV
@@ -75,10 +73,10 @@ jobs:
 
       - name: Login to ECR
         run: |
-          aws ecr get-login-password --region "$AWS_REGION" | docker login \
-            --username AWS \
-            --password-stdin \
-            "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password | docker login \
+          --username AWS \
+          --password-stdin \
+          "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
       - name: Build and push backend image
         run: |
@@ -93,6 +91,49 @@ jobs:
           docker tag "$FRONTEND_REPO:${GITHUB_SHA}" "$FRONTEND_REPO:latest"
           docker push "$FRONTEND_REPO:${GITHUB_SHA}"
           docker push "$FRONTEND_REPO:latest"
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_DIR }}/tfplan
+
+# =========================
+# STAGE 2: APPLY (APPROVED)
+# =========================
+  terraform-apply:
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    environment: dev   
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_DIR }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=jobgpt/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}

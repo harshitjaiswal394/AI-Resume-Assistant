@@ -2,6 +2,8 @@ server {
     listen 80;
     client_max_body_size 100M;
 
+    resolver RESOLVER_PLACEHOLDER valid=10s ipv6=off;
+
     location / {
         root /usr/share/nginx/html;
         index index.html;

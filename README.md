@@ -6,15 +6,20 @@ An AI-powered resume assistant that lets you interact with your resume like Chat
 
 ## 🚀 UI Preview
 
-![JobGPT UI](./ALB_UI.png)
+![JobGPT UI](./Deploymet-documents/UI_WITH_DOMAIN.png)
 
 ## 🚀 Console Preview with ALB
 
-![Console UI](./ALB.png)
+![Console UI](./Deploymet-documents/ALB.png)
 
 ## 🚀 Backend LOGS
 
-![Backend Logs](./backend_logs.png)
+![Backend Logs](./Deploymet-documents/backend_logs.png)
+
+## 🚀 Backend Metrics
+
+![Backend Logs](./Deploymet-documents/metric.png)
+
 
 ##  Overview
 

@@ -188,6 +188,7 @@ module "frontend_service" {
   log_group_name     = "/ecs/${local.cluster_name}/${local.frontend_service_name}"
   aws_region         = var.aws_region
   tags               = local.common_tags
+  depends_on = [ module.alb ]
 
   environment = {
     ENVIRONMENT          = var.environment
