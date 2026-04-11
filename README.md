@@ -16,7 +16,7 @@ An AI-powered resume assistant that lets you interact with your resume like Chat
 
 ![Backend Logs](./Deploymet-documents/backend_logs.png)
 
-## 🚀 Backend Metric
+## 🚀 Backend Metrics
 
 ![Backend Logs](./Deploymet-documents/metric.png)
 
