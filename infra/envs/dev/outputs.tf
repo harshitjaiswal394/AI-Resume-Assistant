@@ -29,3 +29,11 @@ output "frontend_url" {
 output "frontend_alb_dns_name" {
   value = module.alb.alb_dns_name
 }
+
+output "app_domain_name" {
+  value = var.app_domain_name
+}
+
+output "route53_nameservers" {
+  value = aws_route53_zone.main.name_servers
+}

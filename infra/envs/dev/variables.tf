@@ -57,3 +57,13 @@ variable "nvidia_api_key" {
   type      = string
   sensitive = true
 }
+
+variable "hosted_zone_name" {
+  type    = string
+  default = "jaiswal.shop"
+}
+
+variable "app_domain_name" {
+  type    = string
+  default = "app.jaiswal.shop"
+}

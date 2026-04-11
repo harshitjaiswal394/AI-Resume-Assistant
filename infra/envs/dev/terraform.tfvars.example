@@ -10,3 +10,5 @@ frontend_desired_count = 1
 backend_image_tag      = "latest"
 frontend_image_tag     = "latest"
 nvidia_api_key         = "replace-me"
+hosted_zone_name       = "jaiswal.shop"
+app_domain_name        = "app.jaiswal.shop"
