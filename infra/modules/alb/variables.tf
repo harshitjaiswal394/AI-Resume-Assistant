@@ -27,6 +27,11 @@ variable "health_check_path" {
   default = "/health"
 }
 
+variable "certificate_arn" {
+  type    = string
+  default = null
+}
+
 variable "tags" {
   type = map(string)
 }
