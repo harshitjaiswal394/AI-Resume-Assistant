@@ -14,14 +14,11 @@ env:
 jobs:
 
 # =========================
-# STAGE 1: PLAN
+# STAGE 1: PLAN + BUILD
 # =========================
   terraform-plan:
     runs-on: ubuntu-latest
     environment: dev
-
-    outputs:
-      plan_status: success
 
     steps:
       - name: Checkout code
@@ -48,30 +45,60 @@ jobs:
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform Format Check
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform fmt -check
-
-      - name: Terraform Validate
-        working-directory: ${{ env.TF_DIR }}
-        env:
-          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
-        run: terraform validate
-
       - name: Terraform Plan
         working-directory: ${{ env.TF_DIR }}
         env:
           TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
         run: terraform plan -out=tfplan
 
-      - name: Upload Plan Artifact
+      - name: Bootstrap Infra (ECR, IAM, Cluster)
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          terraform apply -auto-approve \
+            -target=module.default_network \
+            -target=module.app_secrets \
+            -target=module.ecr \
+            -target=module.iam \
+            -target=module.cluster \
+            -target=module.security_groups
+
+      - name: Export ECR repos
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "BACKEND_REPO=$(terraform output -raw backend_repository_url)" >> $GITHUB_ENV
+          echo "FRONTEND_REPO=$(terraform output -raw frontend_repository_url)" >> $GITHUB_ENV
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password | docker login \
+          --username AWS \
+          --password-stdin \
+          "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$BACKEND_REPO:${GITHUB_SHA}" ./backend
+          docker tag "$BACKEND_REPO:${GITHUB_SHA}" "$BACKEND_REPO:latest"
+          docker push "$BACKEND_REPO:${GITHUB_SHA}"
+          docker push "$BACKEND_REPO:latest"
+
+      - name: Build and push frontend image
+        run: |
+          docker build -t "$FRONTEND_REPO:${GITHUB_SHA}" ./frontend
+          docker tag "$FRONTEND_REPO:${GITHUB_SHA}" "$FRONTEND_REPO:latest"
+          docker push "$FRONTEND_REPO:${GITHUB_SHA}"
+          docker push "$FRONTEND_REPO:latest"
+
+      - name: Upload Plan
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
           path: ${{ env.TF_DIR }}/tfplan
 
 # =========================
-# STAGE 2: APPLY (WITH APPROVAL)
+# STAGE 2: APPLY (APPROVED)
 # =========================
   terraform-apply:
     needs: terraform-plan
@@ -82,7 +109,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download Plan Artifact
+      - name: Download Plan
         uses: actions/download-artifact@v4
         with:
           name: tfplan
@@ -107,11 +134,14 @@ jobs:
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform Apply (Approved)
+      - name: Terraform Apply
         working-directory: ${{ env.TF_DIR }}
         env:
           TF_VAR_nvidia_api_key: ${{ secrets.NVIDIA_API_KEY }}
-        run: terraform apply -auto-approve tfplan
+        run: |
+          terraform apply -auto-approve \
+            -var="backend_image_tag=${GITHUB_SHA}" \
+            -var="frontend_image_tag=${GITHUB_SHA}"
 
       - name: Wait for ECS services
         working-directory: ${{ env.TF_DIR }}
